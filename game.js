@@ -19,6 +19,8 @@
   const soundIcon = document.getElementById('soundIcon');
   const pauseButton = document.getElementById('pauseButton');
   const pressed = { left: false, right: false, jump: false };
+  const keyboardHolds = new Set();
+  const touchHolds = new Map();
   const worldWidth = 4280;
   const coinPositions = [
     [255, 0], [430, 1], [630, 2], [835, 0], [1030, 1], [1220, 2],
@@ -340,25 +342,65 @@
     render(); requestAnimationFrame(frame);
   }
   function queueJump() { if (state === 'playing') player.jumpBuffer = .14; }
-  function setKey(key, down) {
-    if (key === 'left' || key === 'ArrowLeft' || key === 'a' || key === 'A') pressed.left = down;
-    if (key === 'right' || key === 'ArrowRight' || key === 'd' || key === 'D') pressed.right = down;
-    if (key === 'jump' || key === ' ' || key === 'ArrowUp' || key === 'w' || key === 'W') {
-      pressed.jump = down; if (down) queueJump();
-    }
+  function controlForKey(key) {
+    if (key === 'ArrowLeft' || key.toLowerCase() === 'a') return 'left';
+    if (key === 'ArrowRight' || key.toLowerCase() === 'd') return 'right';
+    if (key === ' ' || key === 'ArrowUp' || key.toLowerCase() === 'w') return 'jump';
+    return null;
+  }
+  function updateControl(control) {
+    const wasDown = pressed[control];
+    const touchPointers = touchHolds.get(control);
+    const keyboardDown = [...keyboardHolds].some(key => controlForKey(key) === control);
+    pressed[control] = keyboardDown || Boolean(touchPointers?.size);
+    if (control === 'jump' && pressed.jump && !wasDown) queueJump();
+  }
+  function clearControls() {
+    keyboardHolds.clear();
+    touchHolds.clear();
+    for (const control of Object.keys(pressed)) pressed[control] = false;
   }
   window.addEventListener('keydown', e => {
-    if (['ArrowLeft', 'ArrowRight', 'ArrowUp', ' '].includes(e.key)) e.preventDefault();
+    if (state === 'intro' && (e.key === 'Enter' || e.key === ' ')) {
+      if (e.key === ' ') e.preventDefault();
+      startGame();
+      return;
+    }
+    const control = controlForKey(e.key);
+    if (control) {
+      e.preventDefault();
+      if (!keyboardHolds.has(e.key)) {
+        keyboardHolds.add(e.key);
+        updateControl(control);
+      }
+      return;
+    }
     if (e.key === 'Escape' || e.key.toLowerCase() === 'p') { togglePause(); return; }
-    if (state === 'intro' && (e.key === 'Enter' || e.key === ' ')) { startGame(); return; }
-    setKey(e.key, true);
+    if (state === 'intro' && e.key === 'Enter') startGame();
   });
-  window.addEventListener('keyup', e => setKey(e.key, false));
-  window.addEventListener('blur', () => { pressed.left = pressed.right = pressed.jump = false; });
+  window.addEventListener('keyup', e => {
+    const control = controlForKey(e.key);
+    if (!control) return;
+    keyboardHolds.delete(control);
+    updateControl(control);
+  });
+  window.addEventListener('blur', clearControls);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) clearControls(); });
   document.querySelectorAll('.touch-button').forEach(button => {
-    const key = button.dataset.key;
-    button.addEventListener('pointerdown', e => { e.preventDefault(); button.setPointerCapture(e.pointerId); setKey(key, true); });
-    ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(type => button.addEventListener(type, () => setKey(key, false)));
+    const control = button.dataset.key;
+    button.addEventListener('pointerdown', e => {
+      e.preventDefault();
+      button.setPointerCapture(e.pointerId);
+      if (!touchHolds.has(control)) touchHolds.set(control, new Set());
+      touchHolds.get(control).add(e.pointerId);
+      updateControl(control);
+    });
+    ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(type => button.addEventListener(type, e => {
+      const pointers = touchHolds.get(control);
+      pointers?.delete(e.pointerId);
+      if (pointers?.size === 0) touchHolds.delete(control);
+      updateControl(control);
+    }));
   });
   playButton.addEventListener('click', startGame);
   resumeButton.addEventListener('click', () => {
